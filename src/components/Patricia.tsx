@@ -5,7 +5,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
 
 // ==========================================================
-// KONFIGURASI FIREBASE PANCARAN
+// KONFIGURASI FIREBASE PANCARAN (DATA ASLI)
 // ==========================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBWMMwg6nD5Dg1aIab9F5rDNy4csLl7rGw",
@@ -51,29 +51,26 @@ export default function Patricia() {
   }, [chatHistory, isChatOpen]);
 
   // ==========================================================
-  // FUNGSI PINTAR CEK DATA TRACKING (ANTI-ERROR)
+  // FUNGSI PINTAR CEK DATA TRACKING (MURNI KE FIREBASE)
   // ==========================================================
   const fetchTrackingFromFirebase = async (noResi: string) => {
     try {
-      // 1. PINTAR EKSTRAK ANGKA: Misal user ngetik "cek resi ini 8801"
       const words = noResi.trim().split(/\s+/);
       let cleanResi = noResi.trim();
       
-      // Cari kata yang mengandung angka
       const possibleCode = words.find(w => /\d/.test(w)); 
       if (possibleCode) {
-        cleanResi = possibleCode; // Ambil "8801"-nya saja
+        cleanResi = possibleCode;
       }
       
-      // Bersihkan tanda baca (hanya menyisakan huruf, angka, dan strip)
       cleanResi = cleanResi.replace(/[^a-zA-Z0-9-]/g, '');
 
-      // 2. CARI KE FIREBASE MENGGUNAKAN NOMOR YANG SUDAH BERSIH
-      const q = query(collection(db, "DATA_TRACKING"), where("no_resi", "==", cleanResi));
+      // QUERY LANGSUNG KE FIREBASE DENGAN KOLOM "no_do"
+      const q = query(collection(db, "DATA_TRACKING"), where("no_do", "==", cleanResi));
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
-        return `Waduh, maaf ya Pak/Bu. 😔 Patricia tidak bisa menemukan nomor resi *${cleanResi}* tersebut.\n\nBoleh minta tolong pastikan kembali nomor yang diketik sudah benar? Atau Bapak/Ibu bisa langsung chat CS kami di WhatsApp untuk pengecekan lebih detail.`;
+        return `Waduh, maaf ya Pak/Bu. 😔 Patricia tidak bisa menemukan nomor resi *${cleanResi}* tersebut di dalam database kami.\n\nBoleh minta tolong pastikan kembali nomor yang diketik sudah benar? Atau Bapak/Ibu bisa langsung chat CS kami di WhatsApp untuk pengecekan lebih detail.`;
       }
 
       const data = querySnapshot.docs[0].data();
@@ -93,12 +90,27 @@ export default function Patricia() {
     setMessage('');
     setChatHistory(prev => [...prev, { sender: 'patricia', text: '...' }]);
 
-    // LOGIKA PINTAR: Mengenali berbagai kata kunci "Tracking" dari User
     const userText = textToSend.toLowerCase();
     const trackingKeywords = ["lacak", "track", "trak", "resi", "do", "pengiriman", "posisi", "barang", "cek"];
     const isWantsToTrack = trackingKeywords.some(keyword => userText.includes(keyword));
+    
+    // LOGIKA BARU: Cek apakah pesan user mengandung angka (Nomor Resi)
+    const hasNumber = /\d/.test(userText); 
 
-    if (isWantsToTrack && !isWaitingForTracking) {
+    // KONDISI 1: User langsung masukin resi (ada angkanya) ATAU kita memang sedang menunggu input resi
+    if (hasNumber || isWaitingForTracking) {
+      const result = await fetchTrackingFromFirebase(textToSend);
+      setChatHistory(prev => {
+        const newHistory = [...prev];
+        newHistory[newHistory.length - 1] = { sender: 'patricia', text: result };
+        return newHistory;
+      });
+      setIsWaitingForTracking(false); // Reset status
+      return;
+    }
+
+    // KONDISI 2: User hanya ngetik "mau lacak" tanpa memasukkan nomornya
+    if (isWantsToTrack && !hasNumber) {
       setIsWaitingForTracking(true);
       setTimeout(() => {
         setChatHistory(prev => {
@@ -113,18 +125,7 @@ export default function Patricia() {
       return;
     }
 
-    if (isWaitingForTracking) {
-      const result = await fetchTrackingFromFirebase(textToSend);
-      setChatHistory(prev => {
-        const newHistory = [...prev];
-        newHistory[newHistory.length - 1] = { sender: 'patricia', text: result };
-        return newHistory;
-      });
-      setIsWaitingForTracking(false);
-      return;
-    }
-
-    // LOGIKA FALLBACK (Pertanyaan Umum)
+    // KONDISI 3: Pertanyaan Umum (Fallback)
     setTimeout(() => {
       setChatHistory(prev => {
         const newHistory = [...prev];
